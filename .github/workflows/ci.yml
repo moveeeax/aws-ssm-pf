@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ["1.22", "1.23"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build
+        run: go build -o /tmp/ssm-pf .
+
+      - name: Smoke-test CLI (help + list flags)
+        run: |
+          /tmp/ssm-pf --help
+          /tmp/ssm-pf list --help
+
+      - name: Smoke-test connect flow (stubbed aws CLI)
+        run: |
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/cfg"
+          /tmp/ssm-pf --target i-demo --remote-port 5432 --local-port 15432 --aws-binary /usr/bin/true
+          test -f "$XDG_CONFIG_HOME/ssm-pf/history.json"
+          grep -q i-demo "$XDG_CONFIG_HOME/ssm-pf/history.json"
+          /tmp/ssm-pf --recent --aws-binary /usr/bin/true
