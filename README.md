@@ -33,11 +33,14 @@ ergonomics:
 - **Remembered tunnels**: recent targets and port mappings are saved; `--recent`
   reconnects the last one.
 - **Local-port auto-pick**: if your preferred local port is busy, it grabs a free
-  one and tells you.
+  one and tells you. The listener is loopback-only — a tunnel into a private VPC
+  is never exposed to the rest of your network.
 - **SSO / assume-role aware**: `--profile` / `--region` (and the usual env vars)
   flow straight into the default credential chain.
-- **Graceful Ctrl-C**: SIGINT cancels the session context so the CLI and
-  `session-manager-plugin` shut down cleanly.
+- **No leaked tunnels**: the `aws` CLI is only a launcher — the real tunnel is
+  held by the `session-manager-plugin` it forks. `ssm-pf` runs that whole tree in
+  its own process group and tears the group down on Ctrl-C, on `SIGTERM`, and on
+  its own exit, so a live session into your VPC can't outlive the command.
 
 ## Install
 
@@ -63,9 +66,9 @@ ssm-pf list [flags]
 |------|-------------|
 | `-r`, `--remote-port` | Remote port on the instance (required) |
 | `-l`, `--local-port` | Local port to bind (auto-picked if `0` or busy) |
-| `-t`, `--target` | Instance id, skipping the picker |
+| `-t`, `--target` | Instance id (`i-…` / `mi-…`), skipping the picker |
 | `-q`, `--query` | Fuzzy filter for the picker |
-| `--recent` | Reuse the most recent target and ports |
+| `--recent` | Reuse the most recent target and ports (any flag you also pass wins) |
 | `--no-input` | Never prompt; require an unambiguous target |
 | `--document-name` | SSM document (default `AWS-StartPortForwardingSession`) |
 | `--profile` | AWS shared-config profile |
@@ -84,8 +87,15 @@ without AWS using `--aws-binary /usr/bin/true`.
 3. The fuzzy picker ranks candidates (contiguous and word-boundary matches win);
    a unique match connects immediately.
 4. A free local port is chosen, the tunnel is recorded to
-   `${XDG_CONFIG_HOME:-~/.config}/ssm-pf/history.json`, and control is handed to
-   `aws ssm start-session`.
+   `${XDG_CONFIG_HOME:-~/.config}/ssm-pf/history.json` (mode `0600`), and control
+   is handed to `aws ssm start-session`.
+
+Nothing is ever passed through a shell: the `aws` CLI is executed directly with
+an argument vector. On top of that, every value that ends up in that vector —
+target, document name, profile, region, ports — is validated first, so a value
+shaped like another CLI option (say `--endpoint-url=…`) is rejected up front
+rather than reinterpreted by the CLI. Validation runs *before* AWS is contacted,
+a port is bound, or anything is written to the history file.
 
 ## Development
 
