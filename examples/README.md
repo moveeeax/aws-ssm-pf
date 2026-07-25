@@ -44,6 +44,6 @@ ssm-pf list --profile prod-admin
 against a stub:
 
 ```bash
-ssm-pf --target i-demo --remote-port 5432 --local-port 15432 --aws-binary /usr/bin/true
+ssm-pf --target i-0123456789abcdef0 --remote-port 5432 --local-port 15432 --aws-binary /usr/bin/true
 cat "${XDG_CONFIG_HOME:-$HOME/.config}/ssm-pf/history.json"   # the tunnel was remembered
 ```

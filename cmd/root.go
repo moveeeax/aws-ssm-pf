@@ -66,9 +66,15 @@ func newRootCmd() *cobra.Command {
 				if !ok {
 					return fmt.Errorf("no recent tunnel to reuse")
 				}
-				target = last.Target
+				// Explicit flags always win over the remembered tunnel.
+				if target == "" {
+					target = last.Target
+				}
 				if remotePort == 0 {
 					remotePort = last.RemotePort
+				}
+				if localPort == 0 {
+					localPort = last.LocalPort
 				}
 				if g.profile == "" {
 					g.profile = last.Profile
@@ -80,6 +86,21 @@ func newRootCmd() *cobra.Command {
 
 			if remotePort == 0 {
 				return fmt.Errorf("--remote-port is required")
+			}
+			// Validate before touching AWS, binding a port, or recording history,
+			// so a typo costs an error message rather than a half-done side effect.
+			if err := session.ValidatePort("remote", remotePort); err != nil {
+				return err
+			}
+			if localPort != 0 {
+				if err := session.ValidatePort("local", localPort); err != nil {
+					return err
+				}
+			}
+			if target != "" {
+				if err := session.ValidateTarget(target); err != nil {
+					return err
+				}
 			}
 
 			var chosen instance.Instance
@@ -116,6 +137,9 @@ func newRootCmd() *cobra.Command {
 				Profile:      g.profile,
 				Region:       g.region,
 				AWSBinary:    awsBinary,
+			}
+			if err := opts.Validate(); err != nil {
+				return err
 			}
 
 			store.Add(history.Entry{
