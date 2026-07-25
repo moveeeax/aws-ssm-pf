@@ -6,7 +6,9 @@ import (
 	"net"
 )
 
-// IsFree reports whether a TCP port on localhost can currently be bound.
+// IsFree reports whether a TCP port on localhost can currently be bound. The
+// probe is deliberately loopback-only: session-manager-plugin also listens on
+// loopback, so a tunnel into a private VPC is never reachable from the LAN.
 func IsFree(port int) bool {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
@@ -28,8 +30,12 @@ func Free() (int, error) {
 
 // Pick returns preferred when it is free (and non-zero); otherwise it returns a
 // kernel-assigned free port. The bool reports whether the preferred port was
-// substituted.
+// substituted. An out-of-range preference is an error rather than a silent
+// substitution, so a typo cannot quietly land the tunnel on a random port.
 func Pick(preferred int) (int, bool, error) {
+	if preferred < 0 || preferred > 65535 {
+		return 0, false, fmt.Errorf("local port %d out of range 1-65535", preferred)
+	}
 	if preferred > 0 && IsFree(preferred) {
 		return preferred, false, nil
 	}

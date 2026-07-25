@@ -40,7 +40,18 @@ jobs:
       - name: Smoke-test connect flow (stubbed aws CLI)
         run: |
           export XDG_CONFIG_HOME="$RUNNER_TEMP/cfg"
-          /tmp/ssm-pf --target i-demo --remote-port 5432 --local-port 15432 --aws-binary /usr/bin/true
+          /tmp/ssm-pf --target i-0123456789abcdef0 --remote-port 5432 --local-port 15432 --aws-binary /usr/bin/true
           test -f "$XDG_CONFIG_HOME/ssm-pf/history.json"
-          grep -q i-demo "$XDG_CONFIG_HOME/ssm-pf/history.json"
+          grep -q i-0123456789abcdef0 "$XDG_CONFIG_HOME/ssm-pf/history.json"
           /tmp/ssm-pf --recent --aws-binary /usr/bin/true
+
+      - name: Reject targets that could be mistaken for CLI options
+        run: |
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/cfg-reject"
+          for bad in '--endpoint-url=http://attacker.example' 'i-0123456789abcdef0 --profile evil' 'not-an-instance'; do
+            if /tmp/ssm-pf --target "$bad" --remote-port 5432 --aws-binary /usr/bin/true; then
+              echo "target '$bad' was accepted" >&2
+              exit 1
+            fi
+          done
+          test ! -f "$XDG_CONFIG_HOME/ssm-pf/history.json"
