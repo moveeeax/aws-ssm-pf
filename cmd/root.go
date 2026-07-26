@@ -56,9 +56,13 @@ func newRootCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
+			// History is a convenience cache, not load-bearing: a missing,
+			// unreadable, or corrupt history file must not stop an otherwise
+			// valid port forward. Load always returns a usable empty store
+			// alongside any error, so we warn and carry on rather than abort.
 			store, err := history.Load(history.DefaultPath())
 			if err != nil {
-				return fmt.Errorf("load history: %w", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not load history, starting fresh: %v\n", err)
 			}
 
 			if useRecent {

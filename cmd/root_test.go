@@ -73,6 +73,41 @@ func TestConnectFlowRecordsHistory(t *testing.T) {
 	}
 }
 
+// A corrupt history file must not block an otherwise valid port forward:
+// history is a convenience cache, and the command's real job is the tunnel.
+func TestCorruptHistoryDoesNotBlockForward(t *testing.T) {
+	isolateConfig(t)
+	withFakeLister(t, []instance.Instance{{ID: "i-0333333333abcdef0", Name: "db-primary", PingStatus: "Online"}})
+
+	path := history.DefaultPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{not valid json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := run(t, "--remote-port", "5432", "--query", "db", "--no-input", "--aws-binary", "/usr/bin/true")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(out, "Forwarding localhost:") {
+		t.Errorf("forward should still proceed despite corrupt history:\n%s", out)
+	}
+	if !strings.Contains(errOut, "warning") || !strings.Contains(errOut, "history") {
+		t.Errorf("expected a warning about the unreadable history file, got:\n%s", errOut)
+	}
+
+	// The corrupt file should have been replaced with a fresh, valid one.
+	store, loadErr := history.Load(path)
+	if loadErr != nil {
+		t.Fatalf("history should be recoverable after the run: %v", loadErr)
+	}
+	if rec, ok := store.Recent(); !ok || rec.Target != "i-0333333333abcdef0" {
+		t.Errorf("history not recorded after recovering from corruption: %+v (ok=%v)", rec, ok)
+	}
+}
+
 func TestRecentReusesTarget(t *testing.T) {
 	isolateConfig(t)
 	// Seed history directly.
