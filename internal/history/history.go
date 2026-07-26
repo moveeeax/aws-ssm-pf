@@ -38,7 +38,12 @@ func DefaultPath() string {
 	return filepath.Join(dir, "ssm-pf", "history.json")
 }
 
-// Load reads the store at path. A missing file yields an empty store, not an error.
+// Load reads the store at path. A missing file yields an empty store, not an
+// error. A present-but-unreadable-or-corrupt file (partial write from a crash,
+// manual edit, concurrent writer) also yields an empty, usable store: the
+// returned error reports the problem, but the *Store is never nil, so a caller
+// that only wants best-effort history can ignore the error and keep going
+// rather than fail the whole command over a cache file.
 func Load(path string) (*Store, error) {
 	s := &Store{Path: path}
 	raw, err := os.ReadFile(path)
@@ -46,13 +51,15 @@ func Load(path string) (*Store, error) {
 		if os.IsNotExist(err) {
 			return s, nil
 		}
-		return nil, err
+		return &Store{Path: path}, err
 	}
 	if len(raw) == 0 {
 		return s, nil
 	}
 	if err := json.Unmarshal(raw, s); err != nil {
-		return nil, err
+		// Don't trust s: an unmarshal error can still have partially populated
+		// it. Start clean instead of risking a half-decoded store.
+		return &Store{Path: path}, err
 	}
 	s.Path = path
 	return s, nil
@@ -83,13 +90,38 @@ func (s *Store) Recent() (Entry, bool) {
 }
 
 // Save writes the store back to its path, creating parent directories.
+//
+// The write goes through a temp file plus rename rather than a direct
+// WriteFile: a direct write that's interrupted midway (crash, power loss,
+// disk full) leaves truncated JSON behind, and every subsequent invocation
+// would then have to recover from a corrupt history file. Renaming into place
+// is atomic on the same filesystem, so a reader never observes a partial file.
 func (s *Store) Save() error {
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o755); err != nil {
+	dir := filepath.Dir(s.Path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.Path, raw, 0o600)
+	tmp, err := os.CreateTemp(dir, ".history-*.json.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(raw); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, s.Path)
 }
