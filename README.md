@@ -1,7 +1,7 @@
 # aws-ssm-pf
 
 [![ci](https://github.com/moveeeax/aws-ssm-pf/actions/workflows/ci.yml/badge.svg)](https://github.com/moveeeax/aws-ssm-pf/actions/workflows/ci.yml)
-[![go](https://img.shields.io/badge/go-1.22%2B-00ADD8)](https://go.dev)
+[![go](https://img.shields.io/badge/go-1.26%2B-00ADD8)](https://go.dev)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 > `ssm-pf` — forward a port to any instance without touching the console.
@@ -47,6 +47,18 @@ ergonomics:
 ```bash
 go install github.com/moveeeax/aws-ssm-pf@latest
 ```
+
+`go install` names the binary after the last element of the module path, so
+this puts `aws-ssm-pf` (not `ssm-pf`) into `$(go env GOBIN)`, or
+`$(go env GOPATH)/bin` when `GOBIN` is unset. Either call it as `aws-ssm-pf`
+or give it the short name used in the examples below:
+
+```bash
+alias ssm-pf=aws-ssm-pf
+```
+
+From a clone, `make build` produces `./ssm-pf` and `make install` puts `ssm-pf`
+into the same directory `go install` would use.
 
 ### Prerequisites
 
@@ -101,6 +113,7 @@ a port is bound, or anything is written to the history file.
 
 ```bash
 make build   # go build -o ssm-pf .
+make install # build ssm-pf into GOBIN (or GOPATH/bin)
 make test    # go test -race ./...
 make lint    # gofmt -l . && go vet ./...
 ```
