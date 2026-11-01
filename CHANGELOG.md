@@ -35,7 +35,7 @@ without any of the fixes below, until a new tag is cut from `main`.
 
 ### Changed
 
-- Go 1.26 or newer is required (`go` directive raised from 1.24).
+- Go 1.26 or newer is required (`go` directive raised from 1.22 in v0.1.0).
 - AWS SDK for Go v2 modules updated (`aws-sdk-go-v2` v1.47.5, `config`
   v1.33.13, `service/ec2` v1.343.0, `service/ssm` v1.81.2).
 
