@@ -29,8 +29,9 @@ type Store struct {
 	Entries []Entry `json:"entries"`
 }
 
-// DefaultPath returns the config-dir location of the history file, honoring
-// XDG_CONFIG_HOME.
+// DefaultPath returns the location of the history file under
+// os.UserConfigDir: $XDG_CONFIG_HOME or ~/.config on Unix,
+// ~/Library/Application Support on macOS, %AppData% on Windows.
 func DefaultPath() string {
 	dir, err := os.UserConfigDir()
 	if err != nil || dir == "" {
