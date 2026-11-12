@@ -131,8 +131,18 @@ without AWS using `--aws-binary /usr/bin/true`.
 4. With `--rds`, `rds.DescribeDBClusters` and `rds.DescribeDBInstances` list
    endpoints for a second fuzzy picker.
 5. A free local port is chosen, the tunnel is recorded to
-   `${XDG_CONFIG_HOME:-~/.config}/ssm-pf/history.json` (mode `0600`), and control
-   is handed to `aws ssm start-session`.
+   `ssm-pf/history.json` (mode `0600`) under the user config directory, and
+   control is handed to `aws ssm start-session`.
+
+The config directory comes from Go's
+[`os.UserConfigDir`](https://pkg.go.dev/os#UserConfigDir), so the history file
+lives at:
+
+| OS | History file |
+| --- | --- |
+| Linux and other Unix | `$XDG_CONFIG_HOME/ssm-pf/history.json`, or `~/.config/ssm-pf/history.json` when `XDG_CONFIG_HOME` is unset |
+| macOS | `~/Library/Application Support/ssm-pf/history.json` (`XDG_CONFIG_HOME` is ignored) |
+| Windows | `%AppData%\ssm-pf\history.json` |
 
 Nothing is ever passed through a shell: the `aws` CLI is executed directly with
 an argument vector. On top of that, every value that ends up in that vector —

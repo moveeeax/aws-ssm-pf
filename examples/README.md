@@ -60,6 +60,7 @@ against a stub:
 
 ```bash
 ssm-pf --target i-0123456789abcdef0 --remote-port 5432 --local-port 15432 --aws-binary /usr/bin/true
-cat "${XDG_CONFIG_HOME:-$HOME/.config}/ssm-pf/history.json"   # the tunnel was remembered
+cat "${XDG_CONFIG_HOME:-$HOME/.config}/ssm-pf/history.json"   # the tunnel was remembered (Linux)
+cat "$HOME/Library/Application Support/ssm-pf/history.json"   # same, on macOS
 ssm-pf --target i-0123456789abcdef0 --host db.internal.example:5432 --aws-binary /usr/bin/true
 ```

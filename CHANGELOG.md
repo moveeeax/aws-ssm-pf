@@ -41,6 +41,9 @@ without any of the fixes below, until a new tag is cut from `main`.
   random free port.
 - `make install` builds the binary as `ssm-pf`; the README explains that
   `go install` names it `aws-ssm-pf`.
+- The README gives the real history file location per OS. It used to say
+  `${XDG_CONFIG_HOME:-~/.config}` everywhere, but on macOS the file is under
+  `~/Library/Application Support` and on Windows under `%AppData%`.
 
 ### Changed
 
