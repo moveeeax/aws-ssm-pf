@@ -4,6 +4,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,6 +30,11 @@ var listerFactory = func(ctx context.Context, profile, region string) (awsclient
 	return awsclient.New(ctx, profile, region)
 }
 
+// endpointListerFactory is overridable in tests.
+var endpointListerFactory = func(ctx context.Context, profile, region string) (awsclient.EndpointLister, error) {
+	return awsclient.NewRDS(ctx, profile, region)
+}
+
 func newRootCmd() *cobra.Command {
 	var (
 		g          globalFlags
@@ -36,6 +42,9 @@ func newRootCmd() *cobra.Command {
 		localPort  int
 		target     string
 		query      string
+		hostFlag   string
+		rdsMode    bool
+		rdsQuery   string
 		document   string
 		useRecent  bool
 		noInput    bool
@@ -46,9 +55,13 @@ func newRootCmd() *cobra.Command {
 		Use:   "ssm-pf",
 		Short: "Forward a local port to an SSM-managed instance with fuzzy target selection",
 		Long: "ssm-pf wraps `aws ssm start-session` (AWS-StartPortForwardingSession) with a\n" +
-			"fuzzy instance picker, remembered targets, and automatic local-port fallback.",
+			"fuzzy instance picker, remembered targets, and automatic local-port fallback.\n" +
+			"With --host or --rds it forwards through the instance to another host\n" +
+			"(AWS-StartPortForwardingSessionToRemoteHost).",
 		Example: "  ssm-pf --remote-port 5432 --local-port 15432\n" +
 			"  ssm-pf -r 6379 -q cache-prod\n" +
+			"  ssm-pf --host db.internal.example:5432 -l 15432 -q bastion\n" +
+			"  ssm-pf --rds --rds-query orders -q bastion\n" +
 			"  ssm-pf --recent",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -65,6 +78,32 @@ func newRootCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not load history, starting fresh: %v\n", err)
 			}
 
+			// --host may carry the port ("db.internal:5432"); it is the remote
+			// port then, and a different --remote-port is a contradiction.
+			var host string
+			if hostFlag != "" {
+				h, hostPort, err := session.SplitHost(hostFlag)
+				if err != nil {
+					return err
+				}
+				host = h
+				if hostPort != 0 {
+					if remotePort != 0 && remotePort != hostPort {
+						return fmt.Errorf("--host port %d conflicts with --remote-port %d", hostPort, remotePort)
+					}
+					remotePort = hostPort
+				}
+			}
+			if rdsMode && host != "" {
+				return fmt.Errorf("--rds and --host are mutually exclusive")
+			}
+			if rdsMode && useRecent {
+				return fmt.Errorf("--rds and --recent are mutually exclusive: --recent already remembers the host")
+			}
+			if rdsQuery != "" && !rdsMode {
+				return fmt.Errorf("--rds-query requires --rds")
+			}
+
 			if useRecent {
 				last, ok := store.Recent()
 				if !ok {
@@ -74,8 +113,13 @@ func newRootCmd() *cobra.Command {
 				if target == "" {
 					target = last.Target
 				}
-				if remotePort == 0 {
-					remotePort = last.RemotePort
+				// The remembered host and remote port belong together: an
+				// explicit --host replaces both unless --remote-port is given.
+				if host == "" {
+					host = last.Host
+					if remotePort == 0 {
+						remotePort = last.RemotePort
+					}
 				}
 				if localPort == 0 {
 					localPort = last.LocalPort
@@ -88,13 +132,19 @@ func newRootCmd() *cobra.Command {
 				}
 			}
 
-			if remotePort == 0 {
+			// With --rds the remote port can come from the chosen endpoint.
+			if remotePort == 0 && !rdsMode {
+				if host != "" {
+					return fmt.Errorf("--remote-port is required (or give it as --host %s:PORT)", host)
+				}
 				return fmt.Errorf("--remote-port is required")
 			}
 			// Validate before touching AWS, binding a port, or recording history,
 			// so a typo costs an error message rather than a half-done side effect.
-			if err := session.ValidatePort("remote", remotePort); err != nil {
-				return err
+			if remotePort != 0 {
+				if err := session.ValidatePort("remote", remotePort); err != nil {
+					return err
+				}
 			}
 			if localPort != 0 {
 				if err := session.ValidatePort("local", localPort); err != nil {
@@ -104,6 +154,39 @@ func newRootCmd() *cobra.Command {
 			if target != "" {
 				if err := session.ValidateTarget(target); err != nil {
 					return err
+				}
+			}
+			if host != "" {
+				// A host from history skipped SplitHost, so check it here too.
+				if err := session.ValidateHost(host); err != nil {
+					return err
+				}
+			}
+
+			if rdsMode {
+				epLister, err := endpointListerFactory(ctx, g.profile, g.region)
+				if err != nil {
+					return err
+				}
+				eps, err := epLister.ListEndpoints(ctx)
+				if err != nil {
+					return err
+				}
+				ep, err := picker.ChooseEndpoint(cmd.OutOrStdout(), cmd.InOrStdin(), eps, rdsQuery, noInput)
+				if err != nil {
+					return err
+				}
+				// The endpoint comes from the AWS API, but it still ends up in
+				// the aws CLI argument vector, so it gets the same checks.
+				if err := session.ValidateHost(ep.Host); err != nil {
+					return err
+				}
+				host = ep.Host
+				if remotePort == 0 {
+					remotePort = ep.Port
+				}
+				if err := session.ValidatePort("remote", remotePort); err != nil {
+					return fmt.Errorf("endpoint %s: %w", ep.Label(), err)
 				}
 			}
 
@@ -136,6 +219,7 @@ func newRootCmd() *cobra.Command {
 			opts := session.Options{
 				Target:       chosen.ID,
 				DocumentName: document,
+				Host:         host,
 				RemotePort:   remotePort,
 				LocalPort:    local,
 				Profile:      g.profile,
@@ -149,6 +233,7 @@ func newRootCmd() *cobra.Command {
 			store.Add(history.Entry{
 				Target:     chosen.ID,
 				Name:       chosen.Name,
+				Host:       host,
 				RemotePort: remotePort,
 				LocalPort:  local,
 				Profile:    g.profile,
@@ -159,17 +244,25 @@ func newRootCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not save history: %v\n", saveErr)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Forwarding localhost:%d -> %s:%d (Ctrl-C to stop)\n",
-				local, targetLabel(chosen), remotePort)
+			if host != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Forwarding localhost:%d -> %s via %s (Ctrl-C to stop)\n",
+					local, net.JoinHostPort(host, fmt.Sprint(remotePort)), targetLabel(chosen))
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Forwarding localhost:%d -> %s:%d (Ctrl-C to stop)\n",
+					local, targetLabel(chosen), remotePort)
+			}
 			return session.Run(ctx, opts)
 		},
 	}
 
-	root.Flags().IntVarP(&remotePort, "remote-port", "r", 0, "remote port on the instance (required)")
+	root.Flags().IntVarP(&remotePort, "remote-port", "r", 0, "remote port on the instance, or on --host (required unless --host has a port or --rds is set)")
 	root.Flags().IntVarP(&localPort, "local-port", "l", 0, "local port to bind (auto-picked if 0 or busy)")
 	root.Flags().StringVarP(&target, "target", "t", "", "instance id, skipping the picker")
 	root.Flags().StringVarP(&query, "query", "q", "", "fuzzy filter for the instance picker")
-	root.Flags().StringVar(&document, "document-name", session.DefaultDocument, "SSM document to run")
+	root.Flags().StringVar(&hostFlag, "host", "", "forward through the instance to this host (DNS name or IP, optionally host:port)")
+	root.Flags().BoolVar(&rdsMode, "rds", false, "pick the remote host from RDS instance and cluster endpoints")
+	root.Flags().StringVar(&rdsQuery, "rds-query", "", "fuzzy filter for the RDS endpoint picker")
+	root.Flags().StringVar(&document, "document-name", "", "SSM document to run (default "+session.DefaultDocument+", or "+session.RemoteHostDocument+" with --host/--rds)")
 	root.Flags().BoolVar(&useRecent, "recent", false, "reuse the most recent target and ports")
 	root.Flags().BoolVar(&noInput, "no-input", false, "never prompt; require an unambiguous target")
 	root.Flags().StringVar(&awsBinary, "aws-binary", "", "path to the aws CLI (default: aws in PATH)")

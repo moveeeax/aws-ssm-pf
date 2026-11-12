@@ -1,4 +1,5 @@
-// Package awsclient lists SSM-managed instances via aws-sdk-go-v2.
+// Package awsclient lists SSM-managed instances and RDS endpoints via
+// aws-sdk-go-v2.
 package awsclient
 
 import (
@@ -31,6 +32,14 @@ type Client struct {
 // shared-config profile and region. Both SSO and assume-role profiles work
 // because credential resolution is delegated to config.LoadDefaultConfig.
 func New(ctx context.Context, profile, region string) (*Client, error) {
+	cfg, err := loadConfig(ctx, profile, region)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{ssm: ssm.NewFromConfig(cfg), ec2: ec2.NewFromConfig(cfg)}, nil
+}
+
+func loadConfig(ctx context.Context, profile, region string) (aws.Config, error) {
 	var opts []func(*config.LoadOptions) error
 	if profile != "" {
 		opts = append(opts, config.WithSharedConfigProfile(profile))
@@ -40,9 +49,9 @@ func New(ctx context.Context, profile, region string) (*Client, error) {
 	}
 	cfg, err := config.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
+		return aws.Config{}, fmt.Errorf("load aws config: %w", err)
 	}
-	return &Client{ssm: ssm.NewFromConfig(cfg), ec2: ec2.NewFromConfig(cfg)}, nil
+	return cfg, nil
 }
 
 // List returns only SSM-managed instances whose agent last pinged Online,

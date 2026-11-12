@@ -15,6 +15,7 @@ const maxEntries = 20
 type Entry struct {
 	Target     string    `json:"target"`
 	Name       string    `json:"name,omitempty"`
+	Host       string    `json:"host,omitempty"` // remote host behind the target; empty for the target itself
 	RemotePort int       `json:"remote_port"`
 	LocalPort  int       `json:"local_port"`
 	Profile    string    `json:"profile,omitempty"`
@@ -65,12 +66,12 @@ func Load(path string) (*Store, error) {
 	return s, nil
 }
 
-// Add records e as the most recent entry, deduplicating by target+remote port
-// and capping the list length.
+// Add records e as the most recent entry, deduplicating by target, host and
+// remote port, and capping the list length.
 func (s *Store) Add(e Entry) {
 	filtered := s.Entries[:0:0]
 	for _, existing := range s.Entries {
-		if existing.Target == e.Target && existing.RemotePort == e.RemotePort {
+		if existing.Target == e.Target && existing.Host == e.Host && existing.RemotePort == e.RemotePort {
 			continue
 		}
 		filtered = append(filtered, existing)
