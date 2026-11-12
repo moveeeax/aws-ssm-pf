@@ -32,6 +32,23 @@ func TestAddDistinctRemotePortsKept(t *testing.T) {
 	}
 }
 
+func TestAddDistinctHostsKept(t *testing.T) {
+	s := &Store{}
+	s.Add(Entry{Target: "i-1", RemotePort: 5432})
+	s.Add(Entry{Target: "i-1", Host: "orders.internal", RemotePort: 5432})
+	s.Add(Entry{Target: "i-1", Host: "billing.internal", RemotePort: 5432})
+	if len(s.Entries) != 3 {
+		t.Fatalf("the instance and each remote host behind it are separate tunnels, got %d", len(s.Entries))
+	}
+	s.Add(Entry{Target: "i-1", Host: "orders.internal", RemotePort: 5432, LocalPort: 15432})
+	if len(s.Entries) != 3 {
+		t.Fatalf("re-adding the same host should dedup, got %d", len(s.Entries))
+	}
+	if front, _ := s.Recent(); front.Host != "orders.internal" || front.LocalPort != 15432 {
+		t.Errorf("front entry = %+v, want orders.internal with local 15432", front)
+	}
+}
+
 func TestCap(t *testing.T) {
 	s := &Store{}
 	for i := 0; i < maxEntries+5; i++ {
@@ -45,7 +62,7 @@ func TestCap(t *testing.T) {
 func TestSaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "history.json")
 	s := &Store{Path: path}
-	s.Add(Entry{Target: "i-9", Name: "db", RemotePort: 5432, LocalPort: 15432, Profile: "prod", LastUsed: time.Unix(1_700_000_000, 0)})
+	s.Add(Entry{Target: "i-9", Name: "db", Host: "db.internal", RemotePort: 5432, LocalPort: 15432, Profile: "prod", LastUsed: time.Unix(1_700_000_000, 0)})
 	if err := s.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -54,7 +71,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	got, ok := loaded.Recent()
-	if !ok || got.Target != "i-9" || got.Name != "db" || got.Profile != "prod" {
+	if !ok || got.Target != "i-9" || got.Name != "db" || got.Host != "db.internal" || got.Profile != "prod" {
 		t.Errorf("round-trip mismatch: %+v", got)
 	}
 	if loaded.Path != path {

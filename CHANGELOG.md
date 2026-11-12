@@ -10,6 +10,15 @@ The published `v0.1.0` tag (and the `v0` tag next to it) points at commit
 github.com/moveeeax/aws-ssm-pf@latest` therefore still installs that commit,
 without any of the fixes below, until a new tag is cut from `main`.
 
+### Added
+
+- `--host` forwards through the instance to another host (DNS name or IP,
+  optionally `host:port`) with the `AWS-StartPortForwardingSessionToRemoteHost`
+  document. The host is validated like the other CLI arguments, a leading `-`
+  is rejected, and history remembers it for `--recent`.
+- `--rds` (with `--rds-query`) picks the remote host and port from RDS cluster
+  and instance endpoints (`rds:DescribeDBClusters`, `rds:DescribeDBInstances`).
+
 ### Security
 
 - Every value passed to the `aws` CLI (target, document name, profile, region,

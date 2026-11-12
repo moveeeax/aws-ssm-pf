@@ -48,6 +48,98 @@ func TestArgsWithProfileRegionAndDocument(t *testing.T) {
 	}
 }
 
+func TestArgsRemoteHost(t *testing.T) {
+	o := Options{Target: testTarget, Host: "db.internal.example", RemotePort: 5432, LocalPort: 15432}
+	got := o.Args()
+	want := []string{
+		"ssm", "start-session",
+		"--target", testTarget,
+		"--document-name", "AWS-StartPortForwardingSessionToRemoteHost",
+		"--parameters", `{"host":["db.internal.example"],"localPortNumber":["15432"],"portNumber":["5432"]}`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("Args = %v\nwant %v", got, want)
+	}
+}
+
+// An explicit --document-name wins over the remote-host default, as it does
+// for the plain port forward.
+func TestArgsRemoteHostCustomDocument(t *testing.T) {
+	o := Options{Target: testTarget, Host: "10.0.0.5", RemotePort: 6379, LocalPort: 16379, DocumentName: "Custom-Remote"}
+	got := strings.Join(o.Args(), " ")
+	if !strings.Contains(got, "--document-name Custom-Remote") || !strings.Contains(got, `"host":["10.0.0.5"]`) {
+		t.Errorf("unexpected args %q", got)
+	}
+}
+
+func TestValidateHost(t *testing.T) {
+	for _, ok := range []string{
+		"db.internal.example",
+		"orders.cluster-abc.eu-central-1.rds.amazonaws.com",
+		"localhost",
+		"db.internal.",
+		"my_host.corp",
+		"10.0.0.5",
+		"fd00::5",
+	} {
+		if err := ValidateHost(ok); err != nil {
+			t.Errorf("ValidateHost(%q) = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []string{
+		"",
+		"--endpoint-url=http://attacker.example",
+		"-db.internal",
+		"db-.internal",
+		"db..internal",
+		"db.internal --profile evil",
+		"db.internal;rm -rf /",
+		"db.internal\n--debug",
+		"db.internal:5432",
+		"fe80::1%eth0",
+		strings.Repeat("a", 64) + ".example",
+		strings.Repeat("abcdefghi.", 26) + "example",
+	} {
+		if err := ValidateHost(bad); err == nil {
+			t.Errorf("ValidateHost(%q) accepted", bad)
+		}
+	}
+}
+
+func TestSplitHost(t *testing.T) {
+	cases := []struct {
+		in   string
+		host string
+		port int
+	}{
+		{"db.internal", "db.internal", 0},
+		{"db.internal:5432", "db.internal", 5432},
+		{"10.0.0.5:6379", "10.0.0.5", 6379},
+		{"[fd00::5]:5432", "fd00::5", 5432},
+		{"fd00::5", "fd00::5", 0},
+	}
+	for _, c := range cases {
+		host, port, err := SplitHost(c.in)
+		if err != nil || host != c.host || port != c.port {
+			t.Errorf("SplitHost(%q) = %q, %d, %v; want %q, %d", c.in, host, port, err, c.host, c.port)
+		}
+	}
+	for _, bad := range []string{
+		"",
+		":5432",
+		"-db.internal:5432",
+		"--endpoint-url=http://x:80",
+		"db.internal:http",
+		"db.internal:0",
+		"db.internal:70000",
+		"[fd00::5]",
+	} {
+		if _, _, err := SplitHost(bad); err == nil {
+			t.Errorf("SplitHost(%q) accepted", bad)
+		}
+	}
+}
+
 func TestValidate(t *testing.T) {
 	base := func(mut func(*Options)) Options {
 		o := Options{Target: testTarget, RemotePort: 80, LocalPort: 8080}
@@ -66,6 +158,9 @@ func TestValidate(t *testing.T) {
 		{"bad remote", base(func(o *Options) { o.RemotePort = 0 }), false},
 		{"negative remote", base(func(o *Options) { o.RemotePort = -1 }), false},
 		{"bad local", base(func(o *Options) { o.LocalPort = 70000 }), false},
+		{"ok remote host", base(func(o *Options) { o.Host = "db.internal.example" }), true},
+		{"host that looks like a flag", base(func(o *Options) { o.Host = "--endpoint-url=http://attacker.example" }), false},
+		{"host with spaces", base(func(o *Options) { o.Host = "db.internal --debug" }), false},
 
 		// Everything below would otherwise be handed straight to the aws CLI as
 		// an argument vector element. None of it may be accepted.
